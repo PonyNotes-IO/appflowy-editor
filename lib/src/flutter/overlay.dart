@@ -766,13 +766,25 @@ class _RenderTheatre extends RenderBox
     return result;
   }
 
+  // PonyNotes 补丁：不再让 _RenderTheatre 纯粹由父级定尺寸。
+  // 原实现 sizedByParent=true 且 computeDryLayout 硬断言约束有限、直接撑满父级，
+  // 在 shrinkWrap / 无限高度场景（如 AI 聊天不限高的消息列表）下会因
+  // constraints.biggest 为无限而断言失败、整条布局级联崩溃（Flutter 3.35）。
+  // 改为在 performLayout 中按约束自行定尺寸：约束有限时撑满（保持原行为），
+  // 否则按第一个非定位 onstage 子节点尺寸收缩，对齐新版 Flutter _RenderTheatre。
   @override
-  bool get sizedByParent => true;
+  bool get sizedByParent => false;
 
   @override
   Size computeDryLayout(BoxConstraints constraints) {
-    assert(constraints.biggest.isFinite);
-    return constraints.biggest;
+    if (constraints.biggest.isFinite) {
+      return constraints.biggest;
+    }
+    final RenderBox? child = _firstOnstageChild;
+    if (child == null) {
+      return constraints.constrain(Size.zero);
+    }
+    return constraints.constrain(child.getDryLayout(constraints));
   }
 
   @override
@@ -780,15 +792,27 @@ class _RenderTheatre extends RenderBox
     _hasVisualOverflow = false;
 
     if (_onstageChildCount == 0) {
+      size = constraints.biggest.isFinite
+          ? constraints.biggest
+          : constraints.constrain(Size.zero);
       return;
     }
 
     _resolve();
     assert(_resolvedAlignment != null);
 
+    // 计算自身尺寸：约束有限时撑满父级（保持原 sizedByParent 行为）；
+    // 否则按第一个非定位 onstage 子节点尺寸收缩，以支持无限高度场景。
+    if (constraints.biggest.isFinite) {
+      size = constraints.biggest;
+    } else {
+      final RenderBox sizeChild = _firstOnstageChild!;
+      sizeChild.layout(constraints, parentUsesSize: true);
+      size = constraints.constrain(sizeChild.size);
+    }
+
     // Same BoxConstraints as used by RenderStack for StackFit.expand.
-    final BoxConstraints nonPositionedConstraints =
-        BoxConstraints.tight(constraints.biggest);
+    final BoxConstraints nonPositionedConstraints = BoxConstraints.tight(size);
 
     RenderBox? child = _firstOnstageChild;
     while (child != null) {
