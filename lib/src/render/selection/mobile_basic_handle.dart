@@ -393,32 +393,59 @@ class _IOSDragHandle extends _IDragHandle {
       offset = -ballWidth;
     }
 
-    child = GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      dragStartBehavior: DragStartBehavior.down,
-      onPanStart: (details) {
-        editorState.service.selectionService.onPanStart(
-          details.translate(0, offset),
-          handleType.dragMode,
-        );
-        onDragging?.call(true);
-      },
-      onPanUpdate: (details) {
-        editorState.service.selectionService.onPanUpdate(
-          details.translate(0, offset),
-          handleType.dragMode,
-        );
-        onDragging?.call(true);
-      },
-      onPanEnd: (details) {
-        editorState.service.selectionService.onPanEnd(
-          details,
-          handleType.dragMode,
-        );
-        onDragging?.call(false);
-      },
-      child: child,
-    );
+    void configurePan(PanGestureRecognizer recognizer) {
+      recognizer
+        ..dragStartBehavior = DragStartBehavior.down
+        ..onStart = (details) {
+          editorState.service.selectionService.onPanStart(
+            details.translate(0, offset),
+            handleType.dragMode,
+          );
+          onDragging?.call(true);
+        }
+        ..onUpdate = (details) {
+          editorState.service.selectionService.onPanUpdate(
+            details.translate(0, offset),
+            handleType.dragMode,
+          );
+          onDragging?.call(true);
+        }
+        ..onEnd = (details) {
+          editorState.service.selectionService.onPanEnd(
+            details,
+            handleType.dragMode,
+          );
+          onDragging?.call(false);
+        };
+    }
+
+    if (handleType == HandleType.collapsed) {
+      // The caret handle follows the same rule as the selection handles: it
+      // starts moving on touch down instead of waiting for the pan slop.
+      child = RawGestureDetector(
+        behavior: HitTestBehavior.opaque,
+        gestures: {
+          _ImmediatePanGestureRecognizer:
+              GestureRecognizerFactoryWithHandlers<_ImmediatePanGestureRecognizer>(
+            () => _ImmediatePanGestureRecognizer(),
+            configurePan,
+          ),
+        },
+        child: child,
+      );
+    } else {
+      child = RawGestureDetector(
+        behavior: HitTestBehavior.opaque,
+        gestures: {
+          PanGestureRecognizer:
+              GestureRecognizerFactoryWithHandlers<PanGestureRecognizer>(
+            () => PanGestureRecognizer(),
+            configurePan,
+          ),
+        },
+        child: child,
+      );
+    }
 
     return child;
   }
