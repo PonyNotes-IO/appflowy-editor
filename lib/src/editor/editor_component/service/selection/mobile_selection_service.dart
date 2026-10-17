@@ -472,7 +472,11 @@ class _MobileSelectionServiceWidgetState
     // The native iOS menu disappears as soon as a handle is grabbed. Notify
     // the listeners once so the floating toolbar can hide without waiting for
     // the selection to change (a tap on the handle may never move it).
-    if (PlatformExtension.isIOS && selection != null) {
+    // Only for a non-collapsed selection: the toolbar is not shown for a
+    // caret, and a spurious notification would make it pop up mid-drag.
+    if (PlatformExtension.isIOS &&
+        selection != null &&
+        !selection.isCollapsed) {
       editorState.updateSelectionWithReason(
         selection,
         reason: SelectionUpdateReason.uiEvent,
