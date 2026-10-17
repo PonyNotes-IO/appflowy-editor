@@ -524,8 +524,17 @@ class _MobileSelectionServiceWidgetState
 
   @override
   void onPanEnd(DragEndDetails details, MobileSelectionDragMode mode) {
+    // On iOS the handle claims the gesture on touch down, so a plain tap on
+    // the handle also produces a start/end pair. Re-notifying the unchanged
+    // selection would rebuild the floating toolbar for nothing.
+    final selectionChanged = _panStartSelection != editorState.selection;
+
     _clearPanVariables();
     dragMode = MobileSelectionDragMode.none;
+
+    if (!selectionChanged) {
+      return;
+    }
 
     editorState.updateSelectionWithReason(
       editorState.selection,

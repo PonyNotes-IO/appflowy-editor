@@ -143,6 +143,33 @@ class DragHandle extends _IDragHandle {
   }
 }
 
+/// A [PanGestureRecognizer] that claims the gesture arena as soon as the
+/// pointer goes down, no matter how far the finger has travelled.
+///
+/// The native iOS selection handle starts following the finger on touch down.
+/// Flutter's default [PanGestureRecognizer] only wins once the finger has
+/// travelled [kPanSlop] (36 logical pixels), and until then it can be beaten
+/// by the editor's own recognizers:
+///
+/// * a finger that rests on the handle for [kLongPressTimeout] (500ms) let the
+///   editor's long press recognizer win, which collapses the selection into a
+///   caret;
+/// * a finger that moves 18~36 logical pixels cancelled the long press but did
+///   not yet trigger the pan, so the handle simply did not move.
+///
+/// Both make the handle feel stuck after the first drag. Claiming the arena at
+/// touch down removes both dead zones and matches the native behaviour.
+class _ImmediatePanGestureRecognizer extends PanGestureRecognizer {
+  @override
+  void addAllowedPointer(PointerDownEvent event) {
+    super.addAllowedPointer(event);
+    // `acceptGesture` calls `_checkDrag`, which fires `onStart` at the
+    // touch-down position, so the handle already tracks the finger before the
+    // first move event arrives.
+    resolve(GestureDisposition.accepted);
+  }
+}
+
 /// Selection (left/right) drag handle. Owns its own gesture detector that
 /// fills the entire outer touch zone (provided by [Positioned.fromRect] in
 /// [MobileSelectionHandle]) and consumes both pans and taps so the editor's
@@ -220,56 +247,67 @@ class _SelectionDragHandleState extends State<_SelectionDragHandle> {
       dyOffset = -ballWidth * 2;
     }
 
+    void configurePan(PanGestureRecognizer recognizer) {
+      recognizer
+        ..dragStartBehavior = DragStartBehavior.down
+        ..onStart = (details) {
+          _selection = editorState.service.selectionService.onPanStart(
+            details.translate(0, dyOffset),
+            widget.handleType.dragMode,
+          );
+          widget.onDragging?.call(true);
+        }
+        ..onUpdate = (details) {
+          final newSelection = editorState.service.selectionService.onPanUpdate(
+            details.translate(0, dyOffset),
+            widget.handleType.dragMode,
+          );
+          if (PlatformExtension.isAndroid && _selection != newSelection) {
+            HapticFeedback.selectionClick();
+          }
+          _selection = newSelection;
+          widget.onDragging?.call(true);
+        }
+        ..onEnd = (details) {
+          editorState.service.selectionService.onPanEnd(
+            details,
+            widget.handleType.dragMode,
+          );
+          widget.onDragging?.call(false);
+        };
+    }
+
+    final gestures = <Type, GestureRecognizerFactory>{};
+    if (PlatformExtension.isIOS) {
+      // Match the native iOS selection handle: grab the gesture on touch down
+      // instead of waiting for the 36 logical pixel pan slop.
+      gestures[_ImmediatePanGestureRecognizer] =
+          GestureRecognizerFactoryWithHandlers<_ImmediatePanGestureRecognizer>(
+        () => _ImmediatePanGestureRecognizer(),
+        configurePan,
+      );
+    } else {
+      gestures[PanGestureRecognizer] =
+          GestureRecognizerFactoryWithHandlers<PanGestureRecognizer>(
+        () => PanGestureRecognizer(),
+        configurePan,
+      );
+    }
+    // Swallow taps inside the touch zone. The editor's tap recognizer
+    // sits above us in the gesture arena; without this it wins on lift
+    // and collapses the selection back to a caret. We register a no-op
+    // recognizer so the inner (deeper) tap wins instead.
+    gestures[TapGestureRecognizer] =
+        GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
+      () => TapGestureRecognizer(),
+      (recognizer) {
+        recognizer.onTap = () {};
+      },
+    );
+
     return RawGestureDetector(
       behavior: HitTestBehavior.opaque,
-      gestures: {
-        PanGestureRecognizer:
-            GestureRecognizerFactoryWithHandlers<PanGestureRecognizer>(
-          () => PanGestureRecognizer(),
-          (recognizer) {
-            recognizer
-              ..dragStartBehavior = DragStartBehavior.down
-              ..onStart = (details) {
-                _selection = editorState.service.selectionService.onPanStart(
-                  details.translate(0, dyOffset),
-                  widget.handleType.dragMode,
-                );
-                widget.onDragging?.call(true);
-              }
-              ..onUpdate = (details) {
-                final newSelection =
-                    editorState.service.selectionService.onPanUpdate(
-                  details.translate(0, dyOffset),
-                  widget.handleType.dragMode,
-                );
-                if (PlatformExtension.isAndroid &&
-                    _selection != newSelection) {
-                  HapticFeedback.selectionClick();
-                }
-                _selection = newSelection;
-                widget.onDragging?.call(true);
-              }
-              ..onEnd = (details) {
-                editorState.service.selectionService.onPanEnd(
-                  details,
-                  widget.handleType.dragMode,
-                );
-                widget.onDragging?.call(false);
-              };
-          },
-        ),
-        // Swallow taps inside the touch zone. The editor's tap recognizer
-        // sits above us in the gesture arena; without this it wins on lift
-        // and collapses the selection back to a caret. We register a no-op
-        // recognizer so the inner (deeper) tap wins instead.
-        TapGestureRecognizer:
-            GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
-          () => TapGestureRecognizer(),
-          (recognizer) {
-            recognizer.onTap = () {};
-          },
-        ),
-      },
+      gestures: gestures,
       child: Stack(
         clipBehavior: Clip.none,
         fit: StackFit.expand,
