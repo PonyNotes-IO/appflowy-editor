@@ -109,6 +109,7 @@ class _MobileSelectionServiceWidgetState
 
     WidgetsBinding.instance.addObserver(this);
     editorState.selectionNotifier.addListener(_updateSelection);
+    editorState.addScrollViewScrolledListener(_onScrollViewScrolled);
   }
 
   @override
@@ -117,6 +118,7 @@ class _MobileSelectionServiceWidgetState
     WidgetsBinding.instance.removeObserver(this);
     selectionNotifierAfterLayout.dispose();
     editorState.selectionNotifier.removeListener(_updateSelection);
+    editorState.removeScrollViewScrolledListener(_onScrollViewScrolled);
     collapsedHandleTimer?.cancel();
 
     super.dispose();
@@ -489,6 +491,16 @@ class _MobileSelectionServiceWidgetState
     DragUpdateDetails details,
     MobileSelectionDragMode mode,
   ) {
+    return _updateSelectionFromPanOffset(details.globalPosition);
+  }
+
+  /// Recomputes the selection from the current finger position.
+  ///
+  /// Shared by [onPanUpdate] and the auto scroll callback: when the finger
+  /// rests near the edge of the viewport the editor keeps scrolling, and the
+  /// selection has to grow along with it even though the finger no longer
+  /// moves.
+  Selection? _updateSelectionFromPanOffset(Offset panEndOffset) {
     if (_panStartOffset == null || _panStartScrollDy == null) {
       return null;
     }
@@ -498,8 +510,6 @@ class _MobileSelectionServiceWidgetState
         dragMode == MobileSelectionDragMode.none) {
       return null;
     }
-
-    final panEndOffset = details.globalPosition;
 
     final dy = editorState.service.scrollService?.dy;
     final panStartOffset = dy == null
@@ -534,6 +544,25 @@ class _MobileSelectionServiceWidgetState
     }
 
     return newSelection;
+  }
+
+  /// Keeps the selection in sync while the editor auto scrolls during a
+  /// handle drag. The finger stays put near the edge, so no pan update will
+  /// arrive and the selection would otherwise stop growing.
+  void _onScrollViewScrolled() {
+    if (!PlatformExtension.isIOS) {
+      return;
+    }
+    if (dragMode != MobileSelectionDragMode.leftSelectionHandle &&
+        dragMode != MobileSelectionDragMode.rightSelectionHandle &&
+        dragMode != MobileSelectionDragMode.cursor) {
+      return;
+    }
+    final offset = _lastPanOffset.value;
+    if (offset == null) {
+      return;
+    }
+    _updateSelectionFromPanOffset(offset);
   }
 
   @override
