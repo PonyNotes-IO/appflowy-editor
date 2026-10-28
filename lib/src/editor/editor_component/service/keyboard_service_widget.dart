@@ -168,12 +168,28 @@ class KeyboardServiceWidgetState extends State<KeyboardServiceWidget>
       return KeyEventResult.ignored;
     }
 
-    if ((event is! KeyDownEvent && event is! KeyRepeatEvent) ||
-        !enableIMEShortcuts) {
-      if (textInputService.composingTextRange != TextRange.empty) {
+    final isKeyDown = event is KeyDownEvent || event is KeyRepeatEvent;
+    // Some IMEs, handwriting panels in particular, wire their delete / back
+    // button to a raw key event instead of an editing value update. For that
+    // kind of IME the deletion is applied by the app, never by the IME itself.
+    final isDeleteKey = isKeyDown &&
+        (event.logicalKey == LogicalKeyboardKey.backspace ||
+            event.logicalKey == LogicalKeyboardKey.delete);
+
+    if (!isKeyDown || !enableIMEShortcuts) {
+      if (isDeleteKey) {
+        // Swallowing the key leaves the IME waiting for an editing state update
+        // that never comes, so its delete button does nothing at all. Drop the
+        // composing range and let the command shortcuts below apply the
+        // deletion; the resulting selection change pushes the new editing state
+        // back to the IME.
+        textInputService.clearComposingTextRange();
+        enableIMEShortcuts = true;
+      } else if (textInputService.composingTextRange != TextRange.empty) {
         return KeyEventResult.skipRemainingHandlers;
+      } else {
+        return KeyEventResult.ignored;
       }
-      return KeyEventResult.ignored;
     }
 
     for (final shortcutEvent in widget.commandShortcutEvents) {
